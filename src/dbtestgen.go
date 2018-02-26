@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"database/sql"
 	"errors"
-	"io"
 	"strings"
+	"sync"
 	"text/template"
 )
 
@@ -17,9 +17,11 @@ const (
 )
 
 var (
+	dbsMu                sync.RWMutex
+	dbs                  = make(map[string]*ConfigDB)
 	parserDDL            Parser
-	createTableTemplate  = `CREATE TABLE {{.Schema}}.{{.Name}} ( {{block "listcolumns"}}{{end}} );`
-	columnsTableTemplate = `{{define "listcolumns"}} {{join .Columns ", \n"}} {{end}} `
+	createTableTemplate  = `CREATE TABLE {{.Schema}}.{{.Name}} ( {{.Columns}} );`
+	columnsTableTemplate = `{{define "listcolumns"}} {{join . ", \n"}} {{end}} `
 	funcJoinString       = template.FuncMap{"join": strings.Join}
 )
 
@@ -47,7 +49,7 @@ type Parser interface {
 
 // RegisterParser - function to register the parser according to the Driver
 func RegisterParser(parser Parser) {
-	if parserDDL = parser; parserDDL != nil {
+	if parserDDL = parser; parserDDL == nil {
 		panic("The parser can't be nil.")
 	}
 }
@@ -79,15 +81,47 @@ type ColumnMetadata struct {
 // ConfigTable Define metadata of table
 type ConfigTable struct {
 	Name, DDL, Schema string
-	Columns           []*ColumnMetadata
-	Constraints       []*ConstraintMetadata
+	columns           []*ColumnMetadata
+	constraints       []*ConstraintMetadata
+}
+
+func addConfigDB(db *ConfigDB) error {
+	dbsMu.Lock()
+	defer dbsMu.Unlock()
+
+	if db == nil {
+		panic("The db parameter can't be nil")
+	}
+
+	if _, ok := dbs[db.Name]; ok {
+		return errors.New("Configuration already exists")
+	}
+
+	dbs[db.Name] = db
+
+	return nil
+}
+
+// ReturnConfigDBs Returns all ConfigDB created
+func ReturnConfigDBs() map[string]*ConfigDB {
+	dbsMu.Lock()
+	defer dbsMu.Unlock()
+	return dbs
+}
+
+// ClearConfigDBs Clears all ConfigDB created
+func ClearConfigDBs() {
+	dbsMu.Lock()
+	defer dbsMu.Unlock()
+
+	dbs = make(map[string]*ConfigDB)
 }
 
 // NewConfigDB - Returns a new instance of ConfigDB
-func NewConfigDB(name string, target DBTarget, cfgs ...func(*sql.DB) error) (c *ConfigDB, err error) {
-	c = &ConfigDB{Name: name, Type: target}
+func NewConfigDB(name string, target DBTarget, cfgs ...func(*ConfigDB) error) (c *ConfigDB, err error) {
+	c = &ConfigDB{Name: name, Type: target, DB: new(sql.DB)}
 	for _, fn := range cfgs {
-		if err = fn(c.DB); err != nil {
+		if err = fn(c); err != nil {
 			return nil, err
 		}
 	}
@@ -96,10 +130,13 @@ func NewConfigDB(name string, target DBTarget, cfgs ...func(*sql.DB) error) (c *
 		return nil, err
 	}
 
+	addConfigDB(c)
+
 	return c, nil
 }
 
-func recoverTableMetadata(cfg *ConfigDB) (err error) {
+// RecoverMetadata Process tables configurated to get from database the DDL scripts
+func RecoverMetadata(cfg *ConfigDB) (err error) {
 	if parserDDL == nil {
 		panic("The parser wasn't configured. Call RegisterParser before start.")
 	}
@@ -109,8 +146,8 @@ func recoverTableMetadata(cfg *ConfigDB) (err error) {
 	}
 
 	for _, tbl := range cfg.Tables {
-		tbl.Columns, err = recoverColumnsMetadata(cfg.DB, tbl.Schema, tbl.Name)
-		tbl.Constraints, err = recoverConstraintsMetadata(cfg.DB, tbl.Schema, tbl.Name)
+		tbl.columns, err = recoverColumnsMetadata(cfg.DB, tbl.Schema, tbl.Name)
+		//tbl.Constraints, err = recoverConstraintsMetadata(cfg.DB, tbl.Schema, tbl.Name)
 	}
 
 	return err
@@ -161,43 +198,28 @@ func recoverConstraintsMetadata(db *sql.DB, schemaName, tableName string) (metad
 
 // ReturnTableDDL Returns the DDL string of table
 func (cfg *ConfigTable) ReturnTableDDL() (string, error) {
-	if cfg.Columns == nil || len(cfg.Columns) == 0 {
+	if cfg.columns == nil || len(cfg.columns) == 0 {
 		return "", errors.New("Table haven't columns")
 	}
 
-	tmplMain, err := template.New("tabletmpl").Funcs(funcJoinString).Parse(createTableTemplate)
+	tmplMain, err := template.New("tabletmpl").Parse(createTableTemplate)
 	if err != nil {
 		return "", err
 	}
-
-	tmplTable, err := template.Must(tmplMain.Clone()).Parse(columnsTableTemplate)
-	if err != nil {
-		return "", err
-	}
-
-	r, w := io.Pipe()
 
 	// gets just the ddl of columns
 	columns := make([]string, 0)
-	for _, meta := range cfg.Columns {
+	for _, meta := range cfg.columns {
 		columns = append(columns, meta.DDL)
 	}
 
 	// type to fit with template model
 	data := struct {
-		Name, Schema string
-		Columns      []string
-	}{cfg.Name, cfg.Schema, columns}
-
-	err = tmplTable.Execute(w, data)
-	if err != nil {
-		return "", err
-	}
-	w.Close()
+		Name, Schema, Columns string
+	}{cfg.Name, cfg.Schema, strings.Join(columns, ",\n")}
 
 	buf := new(bytes.Buffer)
-
-	_, err = buf.ReadFrom(r)
+	err = tmplMain.Execute(buf, data)
 	if err != nil {
 		return "", err
 	}
