@@ -17,12 +17,11 @@ const (
 )
 
 var (
-	dbsMu                sync.RWMutex
-	dbs                  = make(map[string]*ConfigDB)
-	parserDDL            Parser
-	createTableTemplate  = `CREATE TABLE {{.Schema}}.{{.Name}} ( {{.Columns}} );`
-	columnsTableTemplate = `{{define "listcolumns"}} {{join . ", \n"}} {{end}} `
-	funcJoinString       = template.FuncMap{"join": strings.Join}
+	dbsMu               sync.RWMutex
+	dbs                 = make(map[string]*ConfigDB)
+	parserDDL           Parser
+	createTableTemplate = `CREATE TABLE {{.Schema}}.{{.Name}} ( {{.Columns}} );`
+	funcJoinString      = template.FuncMap{"join": strings.Join}
 )
 
 // DBTarget - Tell us if the database is the input target or output target
@@ -40,7 +39,7 @@ type Parser interface {
 	ParseConstraints(db *sql.DB, schemaName, tableName string) (constraintsDefinitions map[string]string, err error)
 
 	// RawColumnDefinition - Returns the DDL block on a create table command, like:
-	// `ID UUID NOT NULL PRIMARY KEY`
+	// `ID UUID NOT NULL`
 	// `DESCRIPTION VARCHAR(200) NOT NULL`
 	// `CREATED DATE NULL DEFAULT CURRENT_DATE`
 	// examples on PostgreSQL.
@@ -117,7 +116,7 @@ func ClearConfigDBs() {
 	dbs = make(map[string]*ConfigDB)
 }
 
-// NewConfigDB - Returns a new instance of ConfigDB
+// NewConfigDB Returns a new instance of ConfigDB
 func NewConfigDB(name string, target DBTarget, cfgs ...func(*ConfigDB) error) (c *ConfigDB, err error) {
 	c = &ConfigDB{Name: name, Type: target, DB: new(sql.DB)}
 	for _, fn := range cfgs {
