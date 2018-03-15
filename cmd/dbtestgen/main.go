@@ -6,7 +6,7 @@ import (
 	"strconv"
 
 	_ "github.com/lib/pq"
-	"github.com/pvoliveira/dbtestgen/src"
+	"github.com/pvoliveira/dbtestgen"
 )
 
 type parserPostgres struct{}
@@ -106,13 +106,13 @@ func main() {
 		return err
 	}
 
-	configInput, err := dbtestgen.NewConfigDB("entrada", dbtestgen.Input, openConnInput)
+	configInput, err := dbtestgen.AddConfigDB("entrada", dbtestgen.Input, openConnInput)
 	if err != nil {
 		fmt.Printf("Error: %v", err)
 		return
 	}
 
-	_, err = dbtestgen.NewConfigDB("saida", dbtestgen.Output, openConnOutput)
+	_, err = dbtestgen.AddConfigDB("saida", dbtestgen.Output, openConnOutput)
 	if err != nil {
 		fmt.Printf("Error: %v", err)
 		return

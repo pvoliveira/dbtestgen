@@ -1,3 +1,5 @@
+// Package dbtestgen expose methods and a interface to create dialect
+// used to return metadata around tables and constraint from a database
 package dbtestgen
 
 import (
@@ -10,9 +12,9 @@ import (
 )
 
 const (
-	// Input - database origin of data
+	// Input database origin of data
 	Input DBTarget = iota
-	// Output - database target to the data
+	// Output database target to the data
 	Output
 )
 
@@ -24,21 +26,21 @@ var (
 	funcJoinString      = template.FuncMap{"join": strings.Join}
 )
 
-// DBTarget - Tell us if the database is the input target or output target
+// DBTarget Tell us if the database is the input target or output target
 type DBTarget int
 
-// Parser - defines the parser that implements queries to returns the DDL statement.
+// Parser defines the parser that implements queries to returns the DDL statement.
 type Parser interface {
-	// ParseColumns - Returns array of sql.ColumnType according to columns of table.
+	// ParseColumns Returns array of sql.ColumnType according to columns of table.
 	ParseColumns(db *sql.DB, schemaName, tableName string) (columnsDefinitions []sql.ColumnType, err error)
 
-	// ParseConstraints - Returns DDL statement of constraints like primary key, foreign key, uniques, etc.
+	// ParseConstraints Returns DDL statement of constraints like primary key, foreign key, uniques, etc.
 	// Examples (PostgreSQL):
 	// `ALTER TABLE distributors ADD CONSTRAINT dist_id_zipcode_key UNIQUE (dist_id, zipcode);`
 	// `ALTER TABLE distributors ADD CONSTRAINT distfk FOREIGN KEY (address) REFERENCES addresses (address) MATCH FULL;`
 	ParseConstraints(db *sql.DB, schemaName, tableName string) (constraintsDefinitions map[string]string, err error)
 
-	// RawColumnDefinition - Returns the DDL block on a create table command, like:
+	// RawColumnDefinition Returns the DDL block on a create table command, like:
 	// `ID UUID NOT NULL`
 	// `DESCRIPTION VARCHAR(200) NOT NULL`
 	// `CREATED DATE NULL DEFAULT CURRENT_DATE`
@@ -46,14 +48,14 @@ type Parser interface {
 	RawColumnDefinition(col sql.ColumnType) (sqlType string, err error)
 }
 
-// RegisterParser - function to register the parser according to the Driver
+// RegisterParser function to register the parser according to the Driver
 func RegisterParser(parser Parser) {
 	if parserDDL = parser; parserDDL == nil {
 		panic("The parser can't be nil.")
 	}
 }
 
-// ConfigDB - Stores the configuration to connect to databases
+// ConfigDB Stores the configuration to connect to databases
 type ConfigDB struct {
 	DB     *sql.DB
 	Name   string
@@ -84,7 +86,7 @@ type ConfigTable struct {
 	constraints       []*ConstraintMetadata
 }
 
-func addConfigDB(db *ConfigDB) error {
+func addConfig(db *ConfigDB) error {
 	dbsMu.Lock()
 	defer dbsMu.Unlock()
 
@@ -94,6 +96,17 @@ func addConfigDB(db *ConfigDB) error {
 
 	if _, ok := dbs[db.Name]; ok {
 		return errors.New("Configuration already exists")
+	}
+
+	var hasInput bool
+	for _, dbConfig := range dbs {
+		if !hasInput {
+			hasInput = (dbConfig.Type == Input)
+		} else {
+			if dbConfig.Type == Input {
+				return errors.New("Input configuration already exists")
+			}
+		}
 	}
 
 	dbs[db.Name] = db
@@ -116,8 +129,8 @@ func ClearConfigDBs() {
 	dbs = make(map[string]*ConfigDB)
 }
 
-// NewConfigDB Returns a new instance of ConfigDB
-func NewConfigDB(name string, target DBTarget, cfgs ...func(*ConfigDB) error) (c *ConfigDB, err error) {
+// AddConfigDB Configures a new instance of ConfigDB and return it
+func AddConfigDB(name string, target DBTarget, cfgs ...func(*ConfigDB) error) (c *ConfigDB, err error) {
 	c = &ConfigDB{Name: name, Type: target, DB: new(sql.DB)}
 	for _, fn := range cfgs {
 		if err = fn(c); err != nil {
@@ -129,7 +142,7 @@ func NewConfigDB(name string, target DBTarget, cfgs ...func(*ConfigDB) error) (c
 		return nil, err
 	}
 
-	addConfigDB(c)
+	addConfig(c)
 
 	return c, nil
 }
