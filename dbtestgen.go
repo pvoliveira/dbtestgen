@@ -238,3 +238,21 @@ func (cfg *ConfigTable) ReturnTableDDL() (string, error) {
 
 	return buf.String(), nil
 }
+
+func joinTablesCreateDDL(tables ...*ConfigTable) (string, error) {
+	if tables == nil {
+		return "", errors.New("some ConfigTable needed")
+	}
+
+	ddl := make([]string, 0)
+
+	for _, t := range tables {
+		sql, err := t.ReturnTableDDL()
+		if err != nil {
+			return "", err
+		}
+		ddl = append(ddl, sql)
+	}
+
+	return strings.Join(ddl, "\n"), nil
+}
