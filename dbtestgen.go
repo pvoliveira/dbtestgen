@@ -69,7 +69,7 @@ func (cfg *ConfigDB) checkConn() error {
 
 // ConstraintMetadata Define metadata of constraints
 type ConstraintMetadata struct {
-	Name, DDL string
+	Name, DDL, TableNameRelated string
 }
 
 // ColumnMetadata Define metadata of columns
@@ -81,9 +81,9 @@ type ColumnMetadata struct {
 
 // ConfigTable Define metadata of table
 type ConfigTable struct {
-	Name, DDL, Schema string
-	columns           []*ColumnMetadata
-	constraints       []*ConstraintMetadata
+	Name, Schema string
+	columns      []*ColumnMetadata
+	constraints  []*ConstraintMetadata
 }
 
 func addConfig(db *ConfigDB) error {
@@ -142,7 +142,10 @@ func AddConfigDB(name string, target DBTarget, cfgs ...func(*ConfigDB) error) (c
 		return nil, err
 	}
 
-	addConfig(c)
+	err = addConfig(c)
+	if err != nil {
+		return nil, err
+	}
 
 	return c, nil
 }
@@ -150,16 +153,36 @@ func AddConfigDB(name string, target DBTarget, cfgs ...func(*ConfigDB) error) (c
 // RecoverMetadata Process tables configurated to get from database the DDL scripts
 func RecoverMetadata(cfg *ConfigDB) (err error) {
 	if parserDDL == nil {
-		panic("The parser wasn't configured. Call RegisterParser before start.")
+		panic("parser wasn't configured\ncall RegisterParser before start")
 	}
 
 	if cfg == nil || cfg.Type != Input {
-		return errors.New("Any configuration is input type")
+		return errors.New("can't recover metadata from output configurations")
+	}
+
+	inputTables := make(map[string]bool)
+	for _, t := range cfg.Tables {
+		inputTables[t.Name] = true
 	}
 
 	for _, tbl := range cfg.Tables {
 		tbl.columns, err = recoverColumnsMetadata(cfg.DB, tbl.Schema, tbl.Name)
-		//tbl.Constraints, err = recoverConstraintsMetadata(cfg.DB, tbl.Schema, tbl.Name)
+		if err != nil {
+			return err
+		}
+
+		// constraints related with input tables
+		constraints, err := recoverConstraintsMetadata(cfg.DB, tbl.Schema, tbl.Name)
+		if err != nil {
+			return err
+		}
+
+		// verifing and adding constraints
+		for _, cstr := range constraints {
+			if inputTables[cstr.TableNameRelated] {
+				tbl.constraints = append(tbl.constraints, cstr)
+			}
+		}
 	}
 
 	return err
@@ -241,7 +264,7 @@ func (cfg *ConfigTable) ReturnTableDDL() (string, error) {
 
 func joinTablesCreateDDL(tables ...*ConfigTable) (string, error) {
 	if tables == nil {
-		return "", errors.New("some ConfigTable needed")
+		return "", errors.New("some config tables are needed")
 	}
 
 	ddl := make([]string, 0)
@@ -252,6 +275,20 @@ func joinTablesCreateDDL(tables ...*ConfigTable) (string, error) {
 			return "", err
 		}
 		ddl = append(ddl, sql)
+	}
+
+	return strings.Join(ddl, "\n"), nil
+}
+
+func joinConstraintsCreateDDL(constraints ...*ConstraintMetadata) (string, error) {
+	if constraints == nil {
+		return "", errors.New("some constraints metadata are needed")
+	}
+
+	ddl := make([]string, 0)
+
+	for _, c := range constraints {
+		ddl = append(ddl, c.DDL)
 	}
 
 	return strings.Join(ddl, "\n"), nil

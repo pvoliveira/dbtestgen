@@ -2,7 +2,9 @@ package main
 
 import (
 	"database/sql"
+	"flag"
 	"fmt"
+	"os"
 	"strconv"
 
 	_ "github.com/lib/pq"
@@ -35,10 +37,10 @@ func (p parserPostgres) ParseColumns(db *sql.DB, schemaName, tableName string) (
 
 // ParseConstraints - Returns DDL statement of constraints like primary key, foreign key, uniques, etc.
 func (p parserPostgres) ParseConstraints(db *sql.DB, schemaName, tableName string) (constraintsDefinitions map[string]string, err error) {
-	type constraint struct{ name, def string }
+	type constraint struct{ name, def, related string }
 
 	rows, err := db.Query(`SELECT 
-		conname, pg_catalog.pg_get_constraintdef(r.oid, true) as condef 
+		conname, pg_catalog.pg_get_constraintdef(r.oid, true) as condef, '' as related_table
 		FROM pg_catalog.pg_constraint r 
 		WHERE r.conrelid = '` + schemaName + `.` + tableName + `'::regclass AND r.contype = 'f' ORDER BY 1`)
 
@@ -51,7 +53,7 @@ func (p parserPostgres) ParseConstraints(db *sql.DB, schemaName, tableName strin
 
 	for rows.Next() {
 		var constr = constraint{}
-		if err := rows.Scan(&constr.name, &constr.def); err != nil {
+		if err := rows.Scan(&constr.name, &constr.def, &constr.related); err != nil {
 			return nil, err
 		}
 
@@ -93,6 +95,19 @@ func (p parserPostgres) RawColumnDefinition(col sql.ColumnType) (sqlType string,
 }
 
 func main() {
+	flag.Parse()
+
+	var connStrInput *string
+	var pathConfig *string
+	flag.StringVar(pathConfig, "input", "", "connectionstring to input database")
+	//flag.StringVar(pathConfig, "outputs", "", "connectionstring to outputs database")
+	flag.StringVar(pathConfig, "config", "", "path to config file (yaml)")
+
+	if flag.NArg() < 1 {
+		fmt.Fprintln(os.Stderr, "missing subcommand: list or add")
+		os.Exit(1)
+	}
+
 	openConnInput := func(config *dbtestgen.ConfigDB) error {
 		//dbInstance, err := sql.Open("postgres", "postgres://postgres:senha@10.20.11.119/input?sslmode=disable")
 		dbInstance, err := sql.Open("postgres", "postgres://pagoufacil:pagoufacilw3b@10.20.11.106/pagoufacildb?sslmode=disable")
@@ -100,19 +115,12 @@ func main() {
 		return err
 	}
 
-	openConnOutput := func(config *dbtestgen.ConfigDB) error {
-		dbInstance, err := sql.Open("postgres", "postgres://postgres:senha@10.20.11.119/output?sslmode=disable")
-		config.DB = dbInstance
-		return err
+	// set tables to input configuration that generate the DDL
+	configInputTables := func(config *dbtestgen.ConfigDB) error {
+		//config.Tables =
 	}
 
 	configInput, err := dbtestgen.AddConfigDB("entrada", dbtestgen.Input, openConnInput)
-	if err != nil {
-		fmt.Printf("Error: %v", err)
-		return
-	}
-
-	_, err = dbtestgen.AddConfigDB("saida", dbtestgen.Output, openConnOutput)
 	if err != nil {
 		fmt.Printf("Error: %v", err)
 		return
