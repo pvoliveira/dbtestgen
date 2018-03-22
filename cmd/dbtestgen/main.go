@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	_ "github.com/lib/pq"
 	"github.com/pvoliveira/dbtestgen"
@@ -36,29 +37,35 @@ func (p parserPostgres) ParseColumns(db *sql.DB, schemaName, tableName string) (
 }
 
 // ParseConstraints - Returns DDL statement of constraints like primary key, foreign key, uniques, etc.
-func (p parserPostgres) ParseConstraints(db *sql.DB, schemaName, tableName string) (constraintsDefinitions map[string]string, err error) {
+func (p parserPostgres) ParseConstraints(db *sql.DB, schemaName, tableName string) (constraintsDefinitions map[string]dbtestgen.ConstraintMetadata, err error) {
 	type constraint struct{ name, def, related string }
 
 	rows, err := db.Query(`SELECT 
-		conname, pg_catalog.pg_get_constraintdef(r.oid, true) as condef, '' as related_table
-		FROM pg_catalog.pg_constraint r 
-		WHERE r.conrelid = '` + schemaName + `.` + tableName + `'::regclass AND r.contype = 'f' ORDER BY 1`)
+r.conname, 
+pg_catalog.pg_get_constraintdef(r.oid, true), 
+r.confrelid::regclass
+FROM pg_catalog.pg_constraint r 
+WHERE r.conrelid = '` + schemaName + `.` + tableName + `'::regclass AND r.contype = 'f' ORDER BY 1`)
 
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	constraintsDefinitions = make(map[string]string)
+	constraintsDefinitions = make(map[string]dbtestgen.ConstraintMetadata)
 
 	for rows.Next() {
-		var constr = constraint{}
-		if err := rows.Scan(&constr.name, &constr.def, &constr.related); err != nil {
+		var constr = dbtestgen.ConstraintMetadata{}
+		var definition string
+		if err := rows.Scan(&constr.Name, &definition, &constr.TableNameRelated); err != nil {
 			return nil, err
 		}
 
-		constraintsDefinitions[constr.name] = "ALTER TABLE " + schemaName + "." + tableName + " ADD CONSTRAINT " + constr.name + " " + constr.def
+		constr.DDL = "ALTER TABLE " + schemaName + "." + tableName + " ADD CONSTRAINT " + constr.Name + " " + definition + ";"
+		constraintsDefinitions[constr.Name] = constr
 	}
+
+	fmt.Printf("constraints founded:\n%+v\n", constraintsDefinitions)
 
 	return constraintsDefinitions, nil
 }
@@ -95,56 +102,55 @@ func (p parserPostgres) RawColumnDefinition(col sql.ColumnType) (sqlType string,
 }
 
 func main() {
+	var connStrInput string
+	var tables string
+	flag.StringVar(&connStrInput, "input", "{dialect}://{user}:{password}@{host}/{databasename}[?{parameters=value}]", "connectionstring to input database")
+	flag.StringVar(&tables, "tables", "schema.tableone[,schema.tabletwo]", "tables with respectives schemas")
+
 	flag.Parse()
 
-	var connStrInput *string
-	var pathConfig *string
-	flag.StringVar(pathConfig, "input", "", "connectionstring to input database")
-	//flag.StringVar(pathConfig, "outputs", "", "connectionstring to outputs database")
-	flag.StringVar(pathConfig, "config", "", "path to config file (yaml)")
-
-	if flag.NArg() < 1 {
-		fmt.Fprintln(os.Stderr, "missing subcommand: list or add")
-		os.Exit(1)
-	}
+	// if flag.NArg() < 2 {
+	// 	fmt.Fprintln(os.Stderr, "missing subcommand: input and tables")
+	// 	os.Exit(1)
+	// }
 
 	openConnInput := func(config *dbtestgen.ConfigDB) error {
 		//dbInstance, err := sql.Open("postgres", "postgres://postgres:senha@10.20.11.119/input?sslmode=disable")
-		dbInstance, err := sql.Open("postgres", "postgres://pagoufacil:pagoufacilw3b@10.20.11.106/pagoufacildb?sslmode=disable")
+		//dbInstance, err := sql.Open("postgres", "postgres://pagoufacil:pagoufacilw3b@10.20.11.106/pagoufacildb?sslmode=disable")
+		dbInstance, err := sql.Open("postgres", connStrInput)
+		if err != nil {
+			return err
+		}
 		config.DB = dbInstance
-		return err
+		return nil
 	}
 
 	// set tables to input configuration that generate the DDL
 	configInputTables := func(config *dbtestgen.ConfigDB) error {
-		//config.Tables =
+		paramtables := strings.Split(tables, ",")
+		for _, tablename := range paramtables {
+			schematable := strings.Split(tablename, ".")
+			config.Tables = append(config.Tables, &dbtestgen.ConfigTable{Schema: schematable[0], Name: schematable[1]})
+		}
+
+		return nil
 	}
 
-	configInput, err := dbtestgen.AddConfigDB("entrada", dbtestgen.Input, openConnInput)
+	configInput, err := dbtestgen.AddConfigDB("entrada", dbtestgen.Input, openConnInput, configInputTables)
 	if err != nil {
 		fmt.Printf("Error: %v", err)
-		return
+		os.Exit(1)
 	}
-
-	// TODO: read config from yaml file
-	configInput.Tables = []*dbtestgen.ConfigTable{&dbtestgen.ConfigTable{Schema: "banco", Name: "pessoaemail"}}
 
 	parser := parserPostgres{}
 
 	dbtestgen.RegisterParser(parser)
 
-	err = dbtestgen.RecoverMetadata(configInput)
+	sql, err := configInput.GenerateDDLScript()
 	if err != nil {
 		fmt.Printf("Error:\n%v\n", err)
-		return
+		os.Exit(1)
 	}
 
-	for _, tbl := range configInput.Tables {
-		ddl, err := tbl.ReturnTableDDL()
-		if err != nil {
-			fmt.Printf("Error ReturnTableDDL:\n%v\n", err)
-			return
-		}
-		fmt.Printf("Table:\n%s\n", ddl)
-	}
+	fmt.Fprint(os.Stdout, sql)
 }

@@ -38,7 +38,7 @@ type Parser interface {
 	// Examples (PostgreSQL):
 	// `ALTER TABLE distributors ADD CONSTRAINT dist_id_zipcode_key UNIQUE (dist_id, zipcode);`
 	// `ALTER TABLE distributors ADD CONSTRAINT distfk FOREIGN KEY (address) REFERENCES addresses (address) MATCH FULL;`
-	ParseConstraints(db *sql.DB, schemaName, tableName string) (constraintsDefinitions map[string]string, err error)
+	ParseConstraints(db *sql.DB, schemaName, tableName string) (constraintsDefinitions map[string]ConstraintMetadata, err error)
 
 	// RawColumnDefinition Returns the DDL block on a create table command, like:
 	// `ID UUID NOT NULL`
@@ -67,6 +67,25 @@ func (cfg *ConfigDB) checkConn() error {
 	return cfg.DB.Ping()
 }
 
+// GenerateDDLScript Returns the script SQL to generate tables and relationship constraints
+func (cfg *ConfigDB) GenerateDDLScript() (string, error) {
+	if cfg.Type != Input {
+		return "", errors.New("configuration must be Input type")
+	}
+
+	err := recoverMetadata(cfg)
+	if err != nil {
+		return "", err
+	}
+
+	sql, err := joinTablesCreateDDL(cfg.Tables...)
+	if err != nil {
+		return "", err
+	}
+
+	return sql, nil
+}
+
 // ConstraintMetadata Define metadata of constraints
 type ConstraintMetadata struct {
 	Name, DDL, TableNameRelated string
@@ -84,6 +103,37 @@ type ConfigTable struct {
 	Name, Schema string
 	columns      []*ColumnMetadata
 	constraints  []*ConstraintMetadata
+}
+
+// ReturnTableDDL Returns the DDL string of table
+func (cfg *ConfigTable) ReturnTableDDL() (string, error) {
+	if cfg.columns == nil || len(cfg.columns) == 0 {
+		return "", errors.New("Table haven't columns")
+	}
+
+	tmplMain, err := template.New("tabletmpl").Parse(createTableTemplate)
+	if err != nil {
+		return "", err
+	}
+
+	// gets just the ddl of columns
+	columns := make([]string, 0)
+	for _, meta := range cfg.columns {
+		columns = append(columns, meta.DDL)
+	}
+
+	// type to fit with template model
+	data := struct {
+		Name, Schema, Columns string
+	}{cfg.Name, cfg.Schema, strings.Join(columns, ",\n")}
+
+	buf := new(bytes.Buffer)
+	err = tmplMain.Execute(buf, data)
+	if err != nil {
+		return "", err
+	}
+
+	return buf.String(), nil
 }
 
 func addConfig(db *ConfigDB) error {
@@ -150,8 +200,8 @@ func AddConfigDB(name string, target DBTarget, cfgs ...func(*ConfigDB) error) (c
 	return c, nil
 }
 
-// RecoverMetadata Process tables configurated to get from database the DDL scripts
-func RecoverMetadata(cfg *ConfigDB) (err error) {
+// recoverMetadata Process tables configurated to get from database the DDL scripts
+func recoverMetadata(cfg *ConfigDB) (err error) {
 	if parserDDL == nil {
 		panic("parser wasn't configured\ncall RegisterParser before start")
 	}
@@ -177,9 +227,15 @@ func RecoverMetadata(cfg *ConfigDB) (err error) {
 			return err
 		}
 
-		// verifing and adding constraints
+		tbl.constraints = make([]*ConstraintMetadata, 0)
+		// if is a relationship with one of input tables, then add constraint
 		for _, cstr := range constraints {
-			if inputTables[cstr.TableNameRelated] {
+			tablename := cstr.TableNameRelated
+			if strings.ContainsAny(tablename, ".") {
+				tablename = strings.Split(tablename, ".")[1]
+			}
+
+			if _, ok := inputTables[tablename]; ok {
 				tbl.constraints = append(tbl.constraints, cstr)
 			}
 		}
@@ -221,45 +277,14 @@ func recoverConstraintsMetadata(db *sql.DB, schemaName, tableName string) (metad
 	}
 
 	if cons, err := parserDDL.ParseConstraints(db, schemaName, tableName); err == nil {
-		for name, constraint := range cons {
-			metadata = append(metadata, &ConstraintMetadata{Name: name, DDL: constraint})
+		for _, constraint := range cons {
+			metadata = append(metadata, &constraint)
 		}
 	} else {
 		return nil, err
 	}
 
 	return metadata, nil
-}
-
-// ReturnTableDDL Returns the DDL string of table
-func (cfg *ConfigTable) ReturnTableDDL() (string, error) {
-	if cfg.columns == nil || len(cfg.columns) == 0 {
-		return "", errors.New("Table haven't columns")
-	}
-
-	tmplMain, err := template.New("tabletmpl").Parse(createTableTemplate)
-	if err != nil {
-		return "", err
-	}
-
-	// gets just the ddl of columns
-	columns := make([]string, 0)
-	for _, meta := range cfg.columns {
-		columns = append(columns, meta.DDL)
-	}
-
-	// type to fit with template model
-	data := struct {
-		Name, Schema, Columns string
-	}{cfg.Name, cfg.Schema, strings.Join(columns, ",\n")}
-
-	buf := new(bytes.Buffer)
-	err = tmplMain.Execute(buf, data)
-	if err != nil {
-		return "", err
-	}
-
-	return buf.String(), nil
 }
 
 func joinTablesCreateDDL(tables ...*ConfigTable) (string, error) {
@@ -269,6 +294,7 @@ func joinTablesCreateDDL(tables ...*ConfigTable) (string, error) {
 
 	ddl := make([]string, 0)
 
+	// add 'create table' to script
 	for _, t := range tables {
 		sql, err := t.ReturnTableDDL()
 		if err != nil {
@@ -277,7 +303,16 @@ func joinTablesCreateDDL(tables ...*ConfigTable) (string, error) {
 		ddl = append(ddl, sql)
 	}
 
-	return strings.Join(ddl, "\n"), nil
+	// add 'alter table add constraint' to script
+	for _, t := range tables {
+		constraints, err := joinConstraintsCreateDDL(t.constraints...)
+		if err != nil {
+			return "", err
+		}
+		ddl = append(ddl, constraints)
+	}
+
+	return strings.Join(ddl, "\n\n"), nil
 }
 
 func joinConstraintsCreateDDL(constraints ...*ConstraintMetadata) (string, error) {
