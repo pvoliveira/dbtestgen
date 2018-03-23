@@ -40,12 +40,13 @@ func (p parserPostgres) ParseColumns(db *sql.DB, schemaName, tableName string) (
 func (p parserPostgres) ParseConstraints(db *sql.DB, schemaName, tableName string) (constraintsDefinitions map[string]dbtestgen.ConstraintMetadata, err error) {
 	type constraint struct{ name, def, related string }
 
-	rows, err := db.Query(`SELECT 
-r.conname, 
-pg_catalog.pg_get_constraintdef(r.oid, true), 
-r.confrelid::regclass
-FROM pg_catalog.pg_constraint r 
-WHERE r.conrelid = '` + schemaName + `.` + tableName + `'::regclass AND r.contype = 'f' ORDER BY 1`)
+	rows, err := db.Query(`SELECT distinct
+		r.conname as name, 
+		pg_catalog.pg_get_constraintdef(r.oid, true) as def, 
+		r.confrelid::regclass as related,
+		r.contype as type
+	FROM pg_catalog.pg_constraint r 
+	WHERE r.conrelid = '` + schemaName + `.` + tableName + `'::regclass /*AND r.contype = 'f'*/ ORDER BY r.contype DESC`)
 
 	if err != nil {
 		return nil, err
@@ -99,6 +100,29 @@ func (p parserPostgres) RawColumnDefinition(col sql.ColumnType) (sqlType string,
 	}
 
 	return ddl, nil
+}
+
+func (p parserPostgres) ParseProcedures(db *sql.DB, schemaName, procedureName string) (funcsPropsDefinitions map[string]string, err error) {
+
+	_, err = db.Query(`SELECT n.nspname AS schema
+		,proname AS fname
+		,proargnames AS args
+		,t.typname AS return_type
+		,d.description
+		,pg_get_functiondef(p.oid) as definition
+	FROM pg_proc p
+	JOIN pg_type t
+	  ON p.prorettype = t.oid
+	LEFT OUTER
+	JOIN pg_description d
+	  ON p.oid = d.objoid
+	LEFT OUTER
+	JOIN pg_namespace n
+	  ON n.oid = p.pronamespace
+   WHERE n.nspname~'` + schemaName + `'
+	 AND proname~'` + procedureName + `';`)
+
+	return nil, nil
 }
 
 func main() {
