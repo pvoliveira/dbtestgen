@@ -43,10 +43,13 @@ func (p parserPostgres) ParseConstraints(db *sql.DB, schemaName, tableName strin
 	rows, err := db.Query(`SELECT distinct
 		r.conname as name, 
 		pg_catalog.pg_get_constraintdef(r.oid, true) as def, 
-		r.confrelid::regclass as related,
+		case when r.confrelid::regclass::varchar = '-' then
+			r.conrelid::regclass
+		else 
+			r.confrelid::regclass end as related,
 		r.contype as type
 	FROM pg_catalog.pg_constraint r 
-	WHERE r.conrelid = '` + schemaName + `.` + tableName + `'::regclass /*AND r.contype = 'f'*/ ORDER BY r.contype DESC`)
+	WHERE r.conrelid = '` + schemaName + `.` + tableName + `'::regclass ORDER BY r.contype DESC`)
 
 	if err != nil {
 		return nil, err
@@ -58,15 +61,13 @@ func (p parserPostgres) ParseConstraints(db *sql.DB, schemaName, tableName strin
 	for rows.Next() {
 		var constr = dbtestgen.ConstraintMetadata{}
 		var definition string
-		if err := rows.Scan(&constr.Name, &definition, &constr.TableNameRelated); err != nil {
+		if err := rows.Scan(&constr.Name, &definition, &constr.TableNameRelated, &constr.Type); err != nil {
 			return nil, err
 		}
 
 		constr.DDL = "ALTER TABLE " + schemaName + "." + tableName + " ADD CONSTRAINT " + constr.Name + " " + definition + ";"
 		constraintsDefinitions[constr.Name] = constr
 	}
-
-	fmt.Printf("constraints founded:\n%+v\n", constraintsDefinitions)
 
 	return constraintsDefinitions, nil
 }
