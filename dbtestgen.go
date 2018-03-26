@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"text/template"
@@ -88,7 +89,7 @@ func (cfg *ConfigDB) GenerateDDLScript() (string, error) {
 
 // ConstraintMetadata Define metadata of constraints
 type ConstraintMetadata struct {
-	Name, DDL, TableNameRelated string
+	Name, DDL, TableNameRelated, Type string
 }
 
 // ColumnMetadata Define metadata of columns
@@ -227,16 +228,26 @@ func recoverMetadata(cfg *ConfigDB) (err error) {
 			return err
 		}
 
+		for _, cst := range constraints {
+			fmt.Printf("Filtered constraints:\n\n%+v\n\n", *cst)
+		}
+
 		tbl.constraints = make([]*ConstraintMetadata, 0)
 		// if is a relationship with one of input tables, then add constraint
-		for _, cstr := range constraints {
-			tablename := cstr.TableNameRelated
-			if strings.ContainsAny(tablename, ".") {
-				tablename = strings.Split(tablename, ".")[1]
-			}
+		for _, constrtype := range []string{"p", "f"} {
+			for _, cstr := range constraints {
+				if cstr.Type != constrtype {
+					continue
+				}
 
-			if _, ok := inputTables[tablename]; ok {
-				tbl.constraints = append(tbl.constraints, cstr)
+				tablename := cstr.TableNameRelated
+				if strings.ContainsAny(tablename, ".") {
+					tablename = strings.Split(tablename, ".")[1]
+				}
+
+				if _, ok := inputTables[tablename]; ok {
+					tbl.constraints = append(tbl.constraints, cstr)
+				}
 			}
 		}
 	}
