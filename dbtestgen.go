@@ -228,19 +228,34 @@ func recoverMetadata(cfg *ConfigDB) (err error) {
 			return err
 		}
 
-		for _, cst := range constraints {
-			fmt.Printf("Filtered constraints:\n\n%+v\n\n", *cst)
+		for _, c := range constraints {
+			fmt.Printf("Constraint: >\n%v\n\n", c)
 		}
 
 		tbl.constraints = make([]*ConstraintMetadata, 0)
-		// if is a relationship with one of input tables, then add constraint
-		for _, constrtype := range []string{"p", "f"} {
-			for _, cstr := range constraints {
-				if cstr.Type != constrtype {
-					continue
+
+		for _, typecontraint := range []string{'p', 'f'} {
+
+		}
+
+		for _, cstr := range constraints {
+			if strings.ContainsRune(cstr.Type, 'p') {
+				tablename := cstr.TableNameRelated
+				fmt.Printf("Table related constraint (p): >\n%v\n\n", tablename)
+				if strings.ContainsAny(tablename, ".") {
+					tablename = strings.Split(tablename, ".")[1]
 				}
 
+				if _, ok := inputTables[tablename]; ok {
+					tbl.constraints = append(tbl.constraints, cstr)
+				}
+			}
+		}
+
+		for _, cstr := range constraints {
+			if strings.ContainsRune(cstr.Type, 'f') {
 				tablename := cstr.TableNameRelated
+				fmt.Printf("Table related constraint (f): >\n%v\n\n", tablename)
 				if strings.ContainsAny(tablename, ".") {
 					tablename = strings.Split(tablename, ".")[1]
 				}
@@ -287,12 +302,15 @@ func recoverConstraintsMetadata(db *sql.DB, schemaName, tableName string) (metad
 		return nil, errors.New("Any configuration is input type")
 	}
 
-	if cons, err := parserDDL.ParseConstraints(db, schemaName, tableName); err == nil {
-		for _, constraint := range cons {
-			metadata = append(metadata, &constraint)
-		}
-	} else {
+	var cons map[string]ConstraintMetadata
+	if cons, err = parserDDL.ParseConstraints(db, schemaName, tableName); err != nil {
 		return nil, err
+	}
+
+	metadata = make([]*ConstraintMetadata, 0)
+	for _, v := range cons {
+		constraint := v
+		metadata = append(metadata, &constraint)
 	}
 
 	return metadata, nil
@@ -331,7 +349,7 @@ func joinConstraintsCreateDDL(constraints ...*ConstraintMetadata) (string, error
 		return "", errors.New("some constraints metadata are needed")
 	}
 
-	ddl := make([]string, 0)
+	ddl := make([]string, len(constraints))
 
 	for _, c := range constraints {
 		ddl = append(ddl, c.DDL)
