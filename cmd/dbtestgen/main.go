@@ -69,8 +69,6 @@ func (p parserPostgres) ParseConstraints(db *sql.DB, schemaName, tableName strin
 		constraintsDefinitions[constr.Name] = constr
 	}
 
-	fmt.Printf("Constraints returned:\n%v\n\n", constraintsDefinitions)
-
 	return constraintsDefinitions, nil
 }
 

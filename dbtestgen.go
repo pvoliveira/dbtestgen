@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"database/sql"
 	"errors"
-	"fmt"
 	"strings"
 	"sync"
 	"text/template"
@@ -228,40 +227,19 @@ func recoverMetadata(cfg *ConfigDB) (err error) {
 			return err
 		}
 
-		for _, c := range constraints {
-			fmt.Printf("Constraint: >\n%v\n\n", c)
-		}
-
 		tbl.constraints = make([]*ConstraintMetadata, 0)
 
-		for _, typecontraint := range []string{'p', 'f'} {
+		for _, typecontraint := range []rune{'p', 'f'} {
+			for _, cstr := range constraints {
+				if strings.ContainsRune(cstr.Type, typecontraint) {
+					tablename := cstr.TableNameRelated
+					if strings.ContainsAny(tablename, ".") {
+						tablename = strings.Split(tablename, ".")[1]
+					}
 
-		}
-
-		for _, cstr := range constraints {
-			if strings.ContainsRune(cstr.Type, 'p') {
-				tablename := cstr.TableNameRelated
-				fmt.Printf("Table related constraint (p): >\n%v\n\n", tablename)
-				if strings.ContainsAny(tablename, ".") {
-					tablename = strings.Split(tablename, ".")[1]
-				}
-
-				if _, ok := inputTables[tablename]; ok {
-					tbl.constraints = append(tbl.constraints, cstr)
-				}
-			}
-		}
-
-		for _, cstr := range constraints {
-			if strings.ContainsRune(cstr.Type, 'f') {
-				tablename := cstr.TableNameRelated
-				fmt.Printf("Table related constraint (f): >\n%v\n\n", tablename)
-				if strings.ContainsAny(tablename, ".") {
-					tablename = strings.Split(tablename, ".")[1]
-				}
-
-				if _, ok := inputTables[tablename]; ok {
-					tbl.constraints = append(tbl.constraints, cstr)
+					if _, ok := inputTables[tablename]; ok {
+						tbl.constraints = append(tbl.constraints, cstr)
+					}
 				}
 			}
 		}
@@ -322,6 +300,7 @@ func joinTablesCreateDDL(tables ...*ConfigTable) (string, error) {
 	}
 
 	ddl := make([]string, 0)
+	allContraints := make([]*ConstraintMetadata, 0)
 
 	// add 'create table' to script
 	for _, t := range tables {
@@ -330,18 +309,27 @@ func joinTablesCreateDDL(tables ...*ConfigTable) (string, error) {
 			return "", err
 		}
 		ddl = append(ddl, sql)
+		allContraints = append(allContraints, t.constraints...)
 	}
+
+	ddlTable := strings.Join(ddl, "\n\n")
 
 	// add 'alter table add constraint' to script
-	for _, t := range tables {
-		constraints, err := joinConstraintsCreateDDL(t.constraints...)
-		if err != nil {
-			return "", err
+	sortedConstraints := make([]*ConstraintMetadata, 0)
+	for _, typeconstraint := range []rune{'p', 'f'} {
+		for _, constraint := range allContraints {
+			if strings.ContainsRune(constraint.Type, typeconstraint) {
+				sortedConstraints = append(sortedConstraints, constraint)
+			}
 		}
-		ddl = append(ddl, constraints)
 	}
 
-	return strings.Join(ddl, "\n\n"), nil
+	ddlConstraints, err := joinConstraintsCreateDDL(sortedConstraints...)
+	if err != nil {
+		return "", err
+	}
+
+	return strings.Join([]string{ddlTable, ddlConstraints}, "\n\n"), nil
 }
 
 func joinConstraintsCreateDDL(constraints ...*ConstraintMetadata) (string, error) {
@@ -349,11 +337,11 @@ func joinConstraintsCreateDDL(constraints ...*ConstraintMetadata) (string, error
 		return "", errors.New("some constraints metadata are needed")
 	}
 
-	ddl := make([]string, len(constraints))
+	ddl := make([]string, 0)
 
 	for _, c := range constraints {
 		ddl = append(ddl, c.DDL)
 	}
 
-	return strings.Join(ddl, "\n"), nil
+	return strings.Join(ddl, "\n\n"), nil
 }
