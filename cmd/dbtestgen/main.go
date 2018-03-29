@@ -129,15 +129,18 @@ func (p parserPostgres) ParseProcedures(db *sql.DB, schemaName, procedureName st
 func main() {
 	var connStrInput string
 	var tables string
-	flag.StringVar(&connStrInput, "input", "{dialect}://{user}:{password}@{host}/{databasename}[?{parameters=value}]", "connectionstring to input database")
-	flag.StringVar(&tables, "tables", "schema.tableone[,schema.tabletwo]", "tables with respectives schemas")
+	flag.StringVar(&connStrInput, "input", "", "connectionstring to input database ({dialect}://{user}:{password}@{host}/{databasename}[?{parameters=value}])")
+	flag.StringVar(&tables, "tables", "", "tables with respectives schemas (schema.tableone[,schema.tabletwo])")
 
 	flag.Parse()
 
-	// if flag.NArg() < 2 {
-	// 	fmt.Fprintln(os.Stderr, "missing subcommand: input and tables")
-	// 	os.Exit(1)
-	// }
+	if flag.NArg() < 2 {
+		fmt.Fprintln(os.Stderr, "missing subcommands: input and tables")
+
+		flag.PrintDefaults()
+
+		os.Exit(1)
+	}
 
 	openConnInput := func(config *dbtestgen.ConfigDB) error {
 		//dbInstance, err := sql.Open("postgres", "postgres://postgres:senha@10.20.11.119/input?sslmode=disable")
