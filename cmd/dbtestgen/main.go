@@ -105,11 +105,7 @@ func (p parserPostgres) RawColumnDefinition(col sql.ColumnType) (sqlType string,
 
 func (p parserPostgres) ParseProcedures(db *sql.DB, schemaName, procedureName string) (funcsPropsDefinitions map[string]string, err error) {
 
-	_, err = db.Query(`SELECT n.nspname AS schema
-		,proname AS fname
-		,proargnames AS args
-		,t.typname AS return_type
-		,d.description
+	rows, err := db.Query(`SELECT n.nspname || '.' || proname AS fname
 		,pg_get_functiondef(p.oid) as definition
 	FROM pg_proc p
 	JOIN pg_type t
@@ -120,10 +116,27 @@ func (p parserPostgres) ParseProcedures(db *sql.DB, schemaName, procedureName st
 	LEFT OUTER
 	JOIN pg_namespace n
 	  ON n.oid = p.pronamespace
-   WHERE n.nspname~'` + schemaName + `'
-	 AND proname~'` + procedureName + `';`)
+    WHERE n.nspname~'` + schemaName + `'
+	 AND proname~'` + procedureName + `'`)
 
-	return nil, nil
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	funcsPropsDefinitions = make(map[string]string)
+
+	for rows.Next() {
+		var name string
+		var definition string
+		if err := rows.Scan(&name, &definition); err != nil {
+			return nil, err
+		}
+
+		funcsPropsDefinitions[name] = definition
+	}
+
+	return funcsPropsDefinitions, nil
 }
 
 func main() {
