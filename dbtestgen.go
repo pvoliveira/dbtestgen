@@ -41,11 +41,14 @@ type Parser interface {
 	ParseConstraints(db *sql.DB, schemaName, tableName string) (constraintsDefinitions map[string]ConstraintMetadata, err error)
 
 	// RawColumnDefinition Returns the DDL block on a create table command, like:
-	// `ID UUID NOT NULL`
-	// `DESCRIPTION VARCHAR(200) NOT NULL`
-	// `CREATED DATE NULL DEFAULT CURRENT_DATE`
+	// `id UUID NOT NULL`
+	// `description VARCHAR(200) NOT NULL`
+	// `created DATE NULL DEFAULT CURRENT_DATE`
 	// examples on PostgreSQL.
 	RawColumnDefinition(col sql.ColumnType) (sqlType string, err error)
+
+	// ParseProcedures returns DDL statement of a procedure identify by schema and name
+	ParseProcedures(db *sql.DB, schemaName, procedureName string) (procsDefinitions map[string]string, err error)
 }
 
 // RegisterParser function to register the parser according to the Driver
@@ -82,6 +85,8 @@ func (cfg *ConfigDB) GenerateDDLScript() (string, error) {
 	if err != nil {
 		return "", err
 	}
+
+	// DDL to create procedures
 
 	return sql, nil
 }

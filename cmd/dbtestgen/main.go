@@ -89,7 +89,7 @@ func (p parserPostgres) RawColumnDefinition(col sql.ColumnType) (sqlType string,
 	}
 
 	if length, ok := col.Length(); ok {
-		ddl += "(" + strconv.Itoa(int(length)) + ")"
+		ddl += fmt.Sprintf("(%d)", length)
 	}
 
 	if nullable, ok := col.Nullable(); ok {
@@ -103,7 +103,7 @@ func (p parserPostgres) RawColumnDefinition(col sql.ColumnType) (sqlType string,
 	return ddl, nil
 }
 
-func (p parserPostgres) ParseProcedures(db *sql.DB, schemaName, procedureName string) (funcsPropsDefinitions map[string]string, err error) {
+func (p parserPostgres) ParseProcedures(db *sql.DB, schemaName, procedureName string) (procsDefinitions map[string]string, err error) {
 
 	rows, err := db.Query(`SELECT n.nspname || '.' || proname AS fname
 		,pg_get_functiondef(p.oid) as definition
@@ -124,7 +124,7 @@ func (p parserPostgres) ParseProcedures(db *sql.DB, schemaName, procedureName st
 	}
 	defer rows.Close()
 
-	funcsPropsDefinitions = make(map[string]string)
+	procsDefinitions = make(map[string]string)
 
 	for rows.Next() {
 		var name string
@@ -133,21 +133,21 @@ func (p parserPostgres) ParseProcedures(db *sql.DB, schemaName, procedureName st
 			return nil, err
 		}
 
-		funcsPropsDefinitions[name] = definition
+		procsDefinitions[name] = definition
 	}
 
-	return funcsPropsDefinitions, nil
+	return procsDefinitions, nil
 }
 
 func main() {
 	var connStrInput string
 	var tables string
-	flag.StringVar(&connStrInput, "input", "", "connectionstring to input database ({dialect}://{user}:{password}@{host}/{databasename}[?{parameters=value}])")
-	flag.StringVar(&tables, "tables", "", "tables with respectives schemas (schema.tableone[,schema.tabletwo])")
+	flag.StringVar(&connStrInput, "input", "", "connectionstring to input database ('{dialect}://{user}:{password}@{host}/{databasename}[?{parameters=value}]')")
+	flag.StringVar(&tables, "tables", "", "tables with respectives schemas ('schema.tableone[,schema.tabletwo]')")
 
 	flag.Parse()
 
-	if flag.NArg() < 2 {
+	if flag.NFlag() < 2 {
 		fmt.Fprintln(os.Stderr, "missing subcommands: input and tables")
 
 		flag.PrintDefaults()
