@@ -1,0 +1,15 @@
+procs:
+  - 
+    schema: banco
+    name: f_retorna_bancoslotericas
+tables:
+  - 
+    schema: banco
+    name: carteira
+    where:
+  - 
+    schema: banco
+    name: bandeira
+  - 
+    schema: banco
+    name: bandeiraurl    

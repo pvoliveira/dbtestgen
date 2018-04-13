@@ -32,23 +32,23 @@ type DBTarget int
 // Parser defines the parser that implements queries to returns the DDL statement.
 type Parser interface {
 	// ParseColumns Returns array of sql.ColumnType according to columns of table.
-	ParseColumns(db *sql.DB, schemaName, tableName string) (columnsDefinitions []sql.ColumnType, err error)
+	ParseColumns(db *sql.DB, schemaName, tableName string) ([]sql.ColumnType, error)
 
 	// ParseConstraints Returns DDL statement of constraints like primary key, foreign key, uniques, etc.
 	// Examples (PostgreSQL):
 	// `ALTER TABLE distributors ADD CONSTRAINT dist_id_zipcode_key UNIQUE (dist_id, zipcode);`
 	// `ALTER TABLE distributors ADD CONSTRAINT distfk FOREIGN KEY (address) REFERENCES addresses (address) MATCH FULL;`
-	ParseConstraints(db *sql.DB, schemaName, tableName string) (constraintsDefinitions map[string]ConstraintMetadata, err error)
+	ParseConstraints(db *sql.DB, schemaName, tableName string) (map[string]ConstraintMetadata, error)
 
 	// RawColumnDefinition Returns the DDL block on a create table command, like:
 	// `id UUID NOT NULL`
 	// `description VARCHAR(200) NOT NULL`
 	// `created DATE NULL DEFAULT CURRENT_DATE`
 	// examples on PostgreSQL.
-	RawColumnDefinition(col sql.ColumnType) (sqlType string, err error)
+	RawColumnDefinition(col sql.ColumnType) (string, error)
 
 	// ParseProcedures returns DDL statement of a procedure identify by schema and name
-	ParseProcedures(db *sql.DB, schemaName, procedureName string) (procsDefinitions map[string]string, err error)
+	ParseProcedures(db *sql.DB, schemaName, procedureName string) (string, error)
 }
 
 // RegisterParser function to register the parser according to the Driver
@@ -64,14 +64,15 @@ type ConfigDB struct {
 	Name   string
 	Type   DBTarget
 	Tables []*ConfigTable
+	Procs  []*ConfigProc
 }
 
 func (cfg *ConfigDB) checkConn() error {
 	return cfg.DB.Ping()
 }
 
-// GenerateDDLScript Returns the script SQL to generate tables and relationship constraints
-func (cfg *ConfigDB) GenerateDDLScript() (string, error) {
+// GenerateScript Returns the script SQL to generate tables and relationship constraints
+func (cfg *ConfigDB) GenerateScript() (string, error) {
 	if cfg.Type != Input {
 		return "", errors.New("configuration must be Input type")
 	}
@@ -87,8 +88,12 @@ func (cfg *ConfigDB) GenerateDDLScript() (string, error) {
 	}
 
 	// DDL to create procedures
+	procs, err := joinProceduresCreateDDL(cfg.Procs...)
+	if err != nil {
+		return "", err
+	}
 
-	return sql, nil
+	return strings.Join([]string{sql, procs}, "\n\n"), nil
 }
 
 // ConstraintMetadata Define metadata of constraints
@@ -105,13 +110,13 @@ type ColumnMetadata struct {
 
 // ConfigTable Define metadata of table
 type ConfigTable struct {
-	Name, Schema string
-	columns      []*ColumnMetadata
-	constraints  []*ConstraintMetadata
+	Name, Schema, Where string
+	columns             []*ColumnMetadata
+	constraints         []*ConstraintMetadata
 }
 
-// ReturnTableDDL Returns the DDL string of table
-func (cfg *ConfigTable) ReturnTableDDL() (string, error) {
+// returnTableDDL Returns the DDL string of table
+func (cfg *ConfigTable) returnTableDDL() (string, error) {
 	if cfg.columns == nil || len(cfg.columns) == 0 {
 		return "", errors.New("Table haven't columns")
 	}
@@ -141,12 +146,57 @@ func (cfg *ConfigTable) ReturnTableDDL() (string, error) {
 	return buf.String(), nil
 }
 
+func (cfg *ConfigTable) generateInsertStatements(db *ConfigDB) (string, error) {
+	if cfg.columns == nil || len(cfg.columns) == 0 {
+		return "", errors.New("table doesn't have columns")
+	}
+
+	if len(cfg.Where) == 0 {
+		return "", errors.New("where condition needed to generate inserts")
+	}
+
+	columnNames := make([]string, 0)
+	for _, col := range cfg.columns {
+		columnNames = append(columnNames, col.Name)
+	}
+
+	rows, err := db.DB.Query(`SELECT `+strings.Join(columnNames, ", ")+` FROM `+cfg.Schema+`.`+cfg.Name+` WHERE `+cfg.Where, nil)
+	if err != nil {
+		return "", errors.New("error on try select data from " + cfg.Schema + "." + cfg.Name + ":\n" + err.Error())
+	}
+
+	insertsStatements := make([]string, 0)
+
+	// I'm not happy about that
+	for rows.Next() {
+		results := make([]interface{}, len(columnNames))
+		if err := rows.Scan(results...); err != nil {
+			return "", errors.New("error on try read the results of query:\n" + err.Error())
+		}
+
+		resultsParsed := make([]string, len(columnNames))
+
+		for i, r := range results {
+			resultsParsed[i] = string(encode(r))
+		}
+
+		insertsStatements = append(insertsStatements, `INSERT INTO `+cfg.Schema+`.`+cfg.Name+` (`+strings.Join(columnNames, ", ")+`) VALUES (`+strings.Join(resultsParsed, ", ")+`);`)
+	}
+
+	return strings.Join(insertsStatements, "\n"), nil
+}
+
+// ConfigProc defines metadata of procedures
+type ConfigProc struct {
+	Name, Schema, DDL string
+}
+
 func addConfig(db *ConfigDB) error {
 	dbsMu.Lock()
 	defer dbsMu.Unlock()
 
 	if db == nil {
-		panic("The db parameter can't be nil")
+		panic("db parameter can't be nil")
 	}
 
 	if _, ok := dbs[db.Name]; ok {
@@ -250,6 +300,19 @@ func recoverMetadata(cfg *ConfigDB) (err error) {
 		}
 	}
 
+	for _, prc := range cfg.Procs {
+		if len(prc.Schema) > 0 && len(prc.Name) > 0 {
+			procDDL, err := recoverProceduresMetadata(cfg.DB, prc.Schema, prc.Name)
+			if err != nil {
+				return err
+			}
+
+			if len(procDDL) > 0 {
+				prc.DDL = procDDL
+			}
+		}
+	}
+
 	return err
 }
 
@@ -278,11 +341,11 @@ func recoverColumnsMetadata(db *sql.DB, schemaName, tableName string) (metadata 
 
 func recoverConstraintsMetadata(db *sql.DB, schemaName, tableName string) (metadata []*ConstraintMetadata, err error) {
 	if parserDDL == nil {
-		panic("The parser wasn't configured. Call RegisterParser before start.")
+		panic("the parser wasn't configured, call RegisterParser before start")
 	}
 
 	if db == nil {
-		return nil, errors.New("Any configuration is input type")
+		return nil, errors.New("db aren't passed")
 	}
 
 	var cons map[string]ConstraintMetadata
@@ -299,6 +362,23 @@ func recoverConstraintsMetadata(db *sql.DB, schemaName, tableName string) (metad
 	return metadata, nil
 }
 
+func recoverProceduresMetadata(db *sql.DB, schemaName, procName string) (string, error) {
+	if parserDDL == nil {
+		panic("the parser wasn't configured, call RegisterParser before start")
+	}
+
+	if db == nil {
+		return "", errors.New("db aren't passed")
+	}
+
+	ddl, err := parserDDL.ParseProcedures(db, schemaName, procName)
+	if err != nil {
+		return "", err
+	}
+
+	return ddl, nil
+}
+
 func joinTablesCreateDDL(tables ...*ConfigTable) (string, error) {
 	if tables == nil {
 		return "", errors.New("some config tables are needed")
@@ -309,7 +389,7 @@ func joinTablesCreateDDL(tables ...*ConfigTable) (string, error) {
 
 	// add 'create table' to script
 	for _, t := range tables {
-		sql, err := t.ReturnTableDDL()
+		sql, err := t.returnTableDDL()
 		if err != nil {
 			return "", err
 		}
@@ -349,4 +429,18 @@ func joinConstraintsCreateDDL(constraints ...*ConstraintMetadata) (string, error
 	}
 
 	return strings.Join(ddl, "\n\n"), nil
+}
+
+func joinProceduresCreateDDL(procs ...*ConfigProc) (string, error) {
+	if procs == nil {
+		return "", errors.New("some procs metadata are needed")
+	}
+
+	ddl := make([]string, 0)
+
+	for _, prc := range procs {
+		ddl = append(ddl, prc.DDL)
+	}
+
+	return strings.Join(ddl, ";\n\n"), nil
 }

@@ -18,14 +18,30 @@ go install github.com/pvoliveira/dbtestgen
 
 
 
+## Configuration file
+
+```yml
+procs:
+  - schema: public
+    name: func1
+tables:
+  - schema: public
+    name: table1
+    where: | fieldString = "string" and fieldNumber = 123
+
+  - schema: public
+    name: table2
+    where: 
+```
+
 # CLI
 
 ## TODO
 
 - [X] Pass configuration to the CLI;
 - [ ] Execute DDL on output DBs;
-- [ ] Extract data from table too;
-- [ ] _Where_ parameter to filter data from tables;
+- [X] Extract data from table too;
+- [X] _Where_ parameter to filter data from tables;
 - [ ] Tests;
 - [ ] Get better API;
 - [ ] SemVer;

@@ -4,12 +4,13 @@ import (
 	"database/sql"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"strconv"
-	"strings"
 
 	_ "github.com/lib/pq"
 	"github.com/pvoliveira/dbtestgen"
+	"gopkg.in/yaml.v2"
 )
 
 type parserPostgres struct{}
@@ -89,7 +90,9 @@ func (p parserPostgres) RawColumnDefinition(col sql.ColumnType) (sqlType string,
 	}
 
 	if length, ok := col.Length(); ok {
-		ddl += fmt.Sprintf("(%d)", length)
+		if length > 0 {
+			ddl += fmt.Sprintf("(%d)", length)
+		}
 	}
 
 	if nullable, ok := col.Nullable(); ok {
@@ -103,10 +106,9 @@ func (p parserPostgres) RawColumnDefinition(col sql.ColumnType) (sqlType string,
 	return ddl, nil
 }
 
-func (p parserPostgres) ParseProcedures(db *sql.DB, schemaName, procedureName string) (procsDefinitions map[string]string, err error) {
+func (p parserPostgres) ParseProcedures(db *sql.DB, schemaName, procedureName string) (string, error) {
 
-	rows, err := db.Query(`SELECT n.nspname || '.' || proname AS fname
-		,pg_get_functiondef(p.oid) as definition
+	rows, err := db.Query(`SELECT /*n.nspname || '.' || proname AS fname,*/ pg_get_functiondef(p.oid) as definition
 	FROM pg_proc p
 	JOIN pg_type t
 	  ON p.prorettype = t.oid
@@ -120,41 +122,52 @@ func (p parserPostgres) ParseProcedures(db *sql.DB, schemaName, procedureName st
 	 AND proname~'` + procedureName + `'`)
 
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	defer rows.Close()
 
-	procsDefinitions = make(map[string]string)
-
-	for rows.Next() {
-		var name string
-		var definition string
-		if err := rows.Scan(&name, &definition); err != nil {
-			return nil, err
-		}
-
-		procsDefinitions[name] = definition
+	var definition string
+	if !rows.Next() {
+		return "", nil
 	}
 
-	return procsDefinitions, nil
+	if err := rows.Scan(&definition); err != nil {
+		return "", err
+	}
+
+	return definition, nil
+}
+
+type configFileProcs struct {
+	Schema, Name string
+}
+
+type configFileTables struct {
+	Schema, Name, Where string
+}
+
+type configFile struct {
+	Procs  []configFileProcs
+	Tables []configFileTables
 }
 
 func main() {
 	var connStrInput string
-	var tables string
-	flag.StringVar(&connStrInput, "input", "", "connectionstring to input database ('{dialect}://{user}:{password}@{host}/{databasename}[?{parameters=value}]')")
-	flag.StringVar(&tables, "tables", "", "tables with respectives schemas ('schema.tableone[,schema.tabletwo]')")
+	var tablesConfig string
+	flag.StringVar(&connStrInput, "inputdb", "", "connectionstring to input database ('{dialect}://{user}:{password}@{host}/{databasename}[?{parameters=value}]')")
+	flag.StringVar(&tablesConfig, "tables", "", "tables with respectives schemas ('schema.tableone[,schema.tabletwo]')")
 
 	flag.Parse()
 
 	if flag.NFlag() < 2 {
-		fmt.Fprintln(os.Stderr, "missing subcommands: input and tables")
+		fmt.Fprintln(os.Stderr, "missing subcommands: inputdb and tables")
 
 		flag.PrintDefaults()
 
 		os.Exit(1)
 	}
 
+	// set the connection string to connect with input database
 	openConnInput := func(config *dbtestgen.ConfigDB) error {
 		//dbInstance, err := sql.Open("postgres", "postgres://postgres:senha@10.20.11.119/input?sslmode=disable")
 		//dbInstance, err := sql.Open("postgres", "postgres://pagoufacil:pagoufacilw3b@10.20.11.106/pagoufacildb?sslmode=disable")
@@ -168,10 +181,31 @@ func main() {
 
 	// set tables to input configuration that generate the DDL
 	configInputTables := func(config *dbtestgen.ConfigDB) error {
-		paramtables := strings.Split(tables, ",")
-		for _, tablename := range paramtables {
-			schematable := strings.Split(tablename, ".")
-			config.Tables = append(config.Tables, &dbtestgen.ConfigTable{Schema: schematable[0], Name: schematable[1]})
+		fileConfig, err := os.Open(tablesConfig)
+		if err != nil {
+			return err
+		}
+		defer fileConfig.Close()
+
+		fileContent, err := ioutil.ReadAll(fileConfig)
+		if err != nil {
+			return err
+		}
+
+		parameters := configFile{}
+		err = yaml.Unmarshal(fileContent, &parameters)
+		if err != nil {
+			return err
+		}
+
+		fmt.Printf("config file converted:\n%+v\n\n", parameters)
+
+		for _, tbl := range parameters.Tables {
+			config.Tables = append(config.Tables, &dbtestgen.ConfigTable{Schema: tbl.Schema, Name: tbl.Name, Where: tbl.Where})
+		}
+
+		for _, prc := range parameters.Procs {
+			config.Procs = append(config.Procs, &dbtestgen.ConfigProc{Schema: prc.Schema, Name: prc.Name})
 		}
 
 		return nil
@@ -183,13 +217,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	parser := parserPostgres{}
+	dbtestgen.RegisterParser(parserPostgres{})
 
-	dbtestgen.RegisterParser(parser)
-
-	sql, err := configInput.GenerateDDLScript()
+	sql, err := configInput.GenerateScript()
 	if err != nil {
-		fmt.Printf("Error:\n%v\n", err)
+		fmt.Fprint(os.Stderr, err)
 		os.Exit(1)
 	}
 
