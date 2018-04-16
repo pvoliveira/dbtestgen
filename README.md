@@ -45,3 +45,4 @@ tables:
 - [ ] Tests;
 - [ ] Get better API;
 - [ ] SemVer;
+- [ ] Move encode-pg.go to a new internal package

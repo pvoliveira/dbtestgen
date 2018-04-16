@@ -1,4 +1,4 @@
-package dbtestgen
+package postgres
 
 // expose methods to generate string value format acording to Go's type
 
