@@ -3,21 +3,28 @@ package dbtestgen
 // TypeConstraint type of constraint.
 type TypeConstraint int
 
-// Defines types of constraint.
+// Defines types of constraints.
 const (
 	CONSTRAINTPK TypeConstraint = iota // primary key
 	CONSTRAINTFK                       // foreign key
 	CONSTRAINTUN                       // unique
 )
 
-type DBObject interface {
-	DDL() (string, error)
+type Executor interface {
+	RegisterTables(tables []*Table) error
+	RegisterProcedures(procs []*Procedure) error
+	ReturnScript() (string, error)
+}
+
+type Generator interface {
+	CommandSQL() (string, error)
 }
 
 type Table struct {
 	Schema string
 	Name   string
-	DBObject
+	Where  string
+	Generator
 }
 
 type Constraint struct {
@@ -25,23 +32,17 @@ type Constraint struct {
 	Name         string
 	TableRelated string
 	TypeConst    TypeConstraint
-	DBObject
+	Generator
 }
 
 type Procedure struct {
 	Schema string
 	Name   string
-	DBObject
+	Generator
 }
 
-func NewTable(schema, name string, dbObj DBObject) *Table {
-	return &Table{Schema: schema, Name: name, DBObject: dbObj}
-}
-
-func NewConstraint(schema, name string, dbObj DBObject) *Constraint {
-	return &Constraint{Schema: schema, Name: name, DBObject: dbObj}
-}
-
-func NewProcedure(schema, name string, dbObj DBObject) *Procedure {
-	return &Procedure{Schema: schema, Name: name, DBObject: dbObj}
+type Statement struct {
+	Schema      string
+	TableTarget string
+	Generator
 }
