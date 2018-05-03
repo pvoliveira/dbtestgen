@@ -11,38 +11,39 @@ const (
 )
 
 type Executor interface {
-	RegisterTables(tables []*Table) error
+	registerConstraints(tables []*Table) (map[TypeConstraint][]*Constraint, error)
 	RegisterProcedures(procs []*Procedure) error
+	RegisterTables(tables []*Table) error
 	ReturnScript() (string, error)
 }
 
-type Generator interface {
+type SQLGenerator interface {
 	CommandSQL() (string, error)
 }
 
 type Table struct {
-	Schema string
-	Name   string
-	Where  string
-	Generator
+	Schema string `json:"schema"`
+	Name   string `json:"name"`
+	Where  string `json:"where"`
+	SQLGenerator
 }
 
 type Constraint struct {
-	Schema       string
-	Name         string
-	TableRelated string
-	TypeConst    TypeConstraint
-	Generator
+	Schema       string         `json:"schema"`
+	Name         string         `json:"name"`
+	TableRelated string         `json:"tableRelated"`
+	TypeConst    TypeConstraint `json:"typeConst"`
+	SQLGenerator
 }
 
 type Procedure struct {
-	Schema string
-	Name   string
-	Generator
+	Schema string `json:"schema"`
+	Name   string `json:"name"`
+	SQLGenerator
 }
 
 type Statement struct {
-	Schema      string
-	TableTarget string
-	Generator
+	Schema      string `json:"schema"`
+	TableTarget string `json:"tableTarget"`
+	SQLGenerator
 }
