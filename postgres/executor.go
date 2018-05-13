@@ -10,11 +10,9 @@ import (
 	"text/template"
 
 	"github.com/pvoliveira/dbtestgen"
-
-	_ "github.com/lib/pq"
 )
 
-var _ dbtestgen.Executor = &Executor{}
+//var _ dbtestgen.Executor = &Executor{}
 
 type Executor struct {
 	db         *sql.DB
@@ -40,9 +38,9 @@ func newSQLGenerator(fn func() (string, error)) (*SQLGenerator, error) {
 	return &SQLGenerator{fn}, nil
 }
 
-func (e *Executor) registerConstraints(tables []*dbtestgen.Table) (map[dbtestgen.TypeConstraint][]*dbtestgen.Constraint, error) {
+func (e *Executor) registerConstraints(tables []*dbtestgen.Table) error {
 	if len(tables) == 0 {
-		return nil, errors.New("tables must be passed")
+		return errors.New("tables must be passed")
 	}
 
 	inputTables := make(map[string]bool)
@@ -52,52 +50,25 @@ func (e *Executor) registerConstraints(tables []*dbtestgen.Table) (map[dbtestgen
 
 	for i, tbl := range tables {
 		if len(tbl.Schema) == 0 || len(tbl.Name) == 0 {
-			return nil, fmt.Errorf("schema and name must be filled in table: item %v", i)
+			return fmt.Errorf("schema and name must be filled in table: item %v", i)
 		}
 
 		constrs, err := returnConstraints(e.db, tbl.Schema, tbl.Name)
 		if err != nil {
-			return nil, err
+			return err
 		}
 
-		for schmTbl, cstr := range constrs {
-			if _, ok := inputTables[schmTbl]; ok {
-				// configure function that returns the ddl of table
-				fnConstDDL := func() (string, error) {
-					rows, errFn := e.db.Query("SELECT * FROM " + tbl.Schema + "." + tbl.Name + " WHERE 1=2")
-					if errFn != nil {
-						return "", errFn
-					}
-					defer rows.Close()
-
-					cols, errFn := rows.ColumnTypes()
-					if errFn != nil {
-						return "", errFn
-					}
-
-					columnsDefinitions := make([]string, 0)
-
-					for _, col := range cols {
-						def := rawColumnDefinition(*col)
-						columnsDefinitions = append(columnsDefinitions, def)
-					}
-
-					return buildDDLCreateTable(tbl.Schema, tbl.Name, columnsDefinitions)
+		for _, cstr := range constrs {
+			for _, c := range cstr {
+				if _, ok := inputTables[c.TableRelated]; ok {
+					e.contraints[c.TypeConst] = append(e.contraints[c.TypeConst], c)
 				}
-
-				gen, err := newSQLGenerator(fnConstDDL)
-				if err != nil {
-					return nil, err
-				}
-
 			}
 		}
 
 	}
 
-	e.tables = tables
-
-	return nil, nil
+	return nil
 }
 
 func returnConstraints(db *sql.DB, schemaName, tableName string) (map[string][]*dbtestgen.Constraint, error) {
@@ -136,6 +107,12 @@ func returnConstraints(db *sql.DB, schemaName, tableName string) (map[string][]*
 			break
 		}
 
+		fnDDLConstr := func() (string, error) {
+			return "ALTER TABLE " + schemaName + "." + tableName + " ADD CONSTRAINT " + constr.Name + " " + definition + ";", nil
+		}
+
+		constr.SQLGenerator, err = newSQLGenerator(fnDDLConstr)
+
 		constraintsDefinitions[schemaName+`.`+tableName] = append(constraintsDefinitions[schemaName+`.`+tableName], constr)
 	}
 
@@ -168,7 +145,7 @@ func (e *Executor) RegisterTables(tables []*dbtestgen.Table) error {
 			columnsDefinitions := make([]string, 0)
 
 			for _, col := range cols {
-				def := rawColumnDefinition(*col)
+				def := sqlColumnDefinition(*col)
 				columnsDefinitions = append(columnsDefinitions, def)
 			}
 
@@ -185,17 +162,15 @@ func (e *Executor) RegisterTables(tables []*dbtestgen.Table) error {
 
 	e.tables = tables
 
-	constrs, err := e.registerConstraints(tables)
+	err := e.registerConstraints(tables)
 	if err != nil {
 		return err
 	}
 
-	e.contraints = constrs
-
 	return nil
 }
 
-func rawColumnDefinition(col sql.ColumnType) string {
+func sqlColumnDefinition(col sql.ColumnType) string {
 	var ddl string
 
 	ddl = col.Name() + " " + col.DatabaseTypeName()

@@ -11,7 +11,7 @@ const (
 )
 
 type Executor interface {
-	registerConstraints(tables []*Table) (map[TypeConstraint][]*Constraint, error)
+	registerConstraints(tables []*Table) error
 	RegisterProcedures(procs []*Procedure) error
 	RegisterTables(tables []*Table) error
 	ReturnScript() (string, error)
