@@ -1,3 +1,4 @@
+// Package postgres implements postgres integration
 package postgres
 
 import (
@@ -14,6 +15,7 @@ import (
 
 //var _ dbtestgen.Executor = &Executor{}
 
+// Executor stores objects to invoke the creation of DDL at the end
 type Executor struct {
 	db         *sql.DB
 	contraints map[dbtestgen.TypeConstraint][]*dbtestgen.Constraint
@@ -22,10 +24,12 @@ type Executor struct {
 	tables     []*dbtestgen.Table
 }
 
+// SQLGenerator implements SQLGenerator interface
 type SQLGenerator struct {
 	fn func() (string, error)
 }
 
+// CommandSQL returns the DDL of each type
 func (s *SQLGenerator) CommandSQL() (string, error) {
 	if s.fn == nil {
 		return "", fmt.Errorf("function to build DDL not defined")
@@ -119,8 +123,9 @@ func returnConstraints(db *sql.DB, schemaName, tableName string) (map[string][]*
 	return constraintsDefinitions, nil
 }
 
+// RegisterTables assigns the function that return the DDL to each table
 func (e *Executor) RegisterTables(tables []*dbtestgen.Table) error {
-	if tables == nil {
+	if tables == nil || len(tables) == 0 {
 		return errors.New("tables must be passed")
 	}
 
@@ -145,8 +150,7 @@ func (e *Executor) RegisterTables(tables []*dbtestgen.Table) error {
 			columnsDefinitions := make([]string, 0)
 
 			for _, col := range cols {
-				def := sqlColumnDefinition(*col)
-				columnsDefinitions = append(columnsDefinitions, def)
+				columnsDefinitions = append(columnsDefinitions, sqlColumnDefinition(*col))
 			}
 
 			return buildDDLCreateTable(tbl.Schema, tbl.Name, columnsDefinitions)
@@ -158,9 +162,9 @@ func (e *Executor) RegisterTables(tables []*dbtestgen.Table) error {
 		}
 
 		tbl.SQLGenerator = gen
-	}
 
-	e.tables = tables
+		e.tables = append(e.tables, tbl)
+	}
 
 	err := e.registerConstraints(tables)
 	if err != nil {
@@ -236,19 +240,123 @@ func buildDDLCreateTable(schema, name string, columns []string) (string, error) 
 	return buf.String(), nil
 }
 
-func (e *Executor) RegisterProcedures(tables []*dbtestgen.Procedure) error {
-	return errors.New("not implemented")
+// RegisterProcedures assigns the function that return the DDL of procedures Postgres
+func (e *Executor) RegisterProcedures(procs []*dbtestgen.Procedure) error {
+	if procs == nil {
+		return errors.New("procedures must be passed")
+	}
+
+	for i, p := range procs {
+		if len(p.Schema) == 0 || len(p.Name) == 0 {
+			return fmt.Errorf("schema and name must be filled in procedure: item %v", i)
+		}
+
+		// configure function that returns the ddl of table
+		fnProcDDL := func() (string, error) {
+			rows, err := e.db.Query(`SELECT /*n.nspname || '.' || proname AS fname,*/ pg_get_functiondef(p.oid) as definition
+			FROM pg_proc p
+			JOIN pg_type t
+			ON p.prorettype = t.oid
+			LEFT OUTER
+			JOIN pg_description d
+			ON p.oid = d.objoid
+			LEFT OUTER
+			JOIN pg_namespace n
+			ON n.oid = p.pronamespace
+			WHERE n.nspname~'` + p.Schema + `'
+			AND proname~'` + p.Name + `'`)
+
+			if err != nil {
+				return "", err
+			}
+			defer rows.Close()
+
+			var definition string
+			if !rows.Next() {
+				return "", nil
+			}
+
+			if err := rows.Scan(&definition); err != nil {
+				return "", err
+			}
+
+			return definition, nil
+		}
+
+		gen, err := newSQLGenerator(fnProcDDL)
+		if err != nil {
+			return err
+		}
+
+		p.SQLGenerator = gen
+	}
+
+	return nil
 }
 
+// ReturnScript joins all scripts DDL of object as result
 func (e *Executor) ReturnScript() (string, error) {
-	return "", errors.New("not implemented")
+	if e.db == nil {
+		return "", errors.New("connection not defined")
+	}
+
+	if err := e.db.Ping(); err != nil {
+		return "", fmt.Errorf("connection can't be established")
+	}
+
+	if e.tables == nil || len(e.tables) == 0 {
+		return "", errors.New("no tables registereds")
+	}
+
+	var buffer strings.Builder
+
+	for _, t := range e.tables {
+		ddl, err := t.SQLGenerator.CommandSQL()
+
+		if err != nil {
+			return "", err
+		}
+
+		buffer.WriteString(ddl + "\n\n")
+	}
+
+	if e.contraints != nil && len(e.contraints) > 0 {
+		for _, typeCons := range []dbtestgen.TypeConstraint{dbtestgen.CONSTRAINTPK, dbtestgen.CONSTRAINTFK, dbtestgen.CONSTRAINTUN} {
+			for _, t := range e.contraints[typeCons] {
+				ddl, err := t.SQLGenerator.CommandSQL()
+
+				if err != nil {
+					return "", err
+				}
+
+				buffer.WriteString(ddl + "\n\n")
+			}
+		}
+	}
+
+	if e.procedures != nil && len(e.procedures) > 0 {
+		for _, t := range e.procedures {
+			ddl, err := t.SQLGenerator.CommandSQL()
+
+			if err != nil {
+				return "", err
+			}
+
+			buffer.WriteString(ddl + "\n\n")
+		}
+	}
+
+	return buffer.String(), nil
 }
 
-func NewExecutor(db *sql.DB) (*Executor, error) {
-	gen := &Executor{db: db}
-	err := gen.db.Ping()
-	if err != nil {
+// NewExecutor constructor of Executor
+func NewExecutor(connStr string) (*Executor, error) {
+	ex := &Executor{}
+
+	var err error
+	if ex.db, err = sql.Open("postgres", connStr); err != nil {
 		return nil, err
 	}
-	return gen, nil
+
+	return ex, nil
 }

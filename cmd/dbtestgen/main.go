@@ -1,18 +1,88 @@
 package main
 
 import (
-	"database/sql"
 	"flag"
 	"fmt"
 	"io/ioutil"
 	"os"
-	"strconv"
 
-	_ "github.com/lib/pq"
 	"github.com/pvoliveira/dbtestgen"
+	"github.com/pvoliveira/dbtestgen/postgres"
 	"gopkg.in/yaml.v2"
 )
 
+type configFile struct {
+	Procs  []*dbtestgen.Procedure
+	Tables []*dbtestgen.Table
+}
+
+func main() {
+	var db string
+	var config string
+	flag.StringVar(&db, "db", "", "connectionstring to input database ('{dialect}://{user}:{password}@{host}/{databasename}[?{parameters=value}]')")
+	flag.StringVar(&config, "config", "config.yml", "file configuring tables to use as input")
+
+	flag.Parse()
+
+	if flag.NFlag() < 2 {
+		fmt.Fprintln(os.Stderr, "missing subcommands: inputdb and tables")
+
+		flag.PrintDefaults()
+
+		os.Exit(1)
+	}
+
+	//dbInstance, err := sql.Open("postgres", "postgres://postgres:senha@10.20.11.119/input?sslmode=disable")
+	//dbInstance, err := sql.Open("postgres", "postgres://pagoufacil:pagoufacilw3b@10.20.11.106/pagoufacildb?sslmode=disable")
+
+	fileConfig, err := os.Open(config)
+	if err != nil {
+		panic(err)
+	}
+	defer fileConfig.Close()
+
+	fileContent, err := ioutil.ReadAll(fileConfig)
+	if err != nil {
+		panic(err)
+	}
+
+	parameters := configFile{}
+	err = yaml.Unmarshal(fileContent, &parameters)
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Printf("config file converted:\n%+v\n\n", parameters)
+
+	// for _, tbl := range parameters.Tables {
+	// 	config.Tables = append(config.Tables, &dbtestgen.ConfigTable{Schema: tbl.Schema, Name: tbl.Name, Where: tbl.Where})
+	// }
+
+	// for _, prc := range parameters.Procs {
+	// 	config.Procs = append(config.Procs, &dbtestgen.ConfigProc{Schema: prc.Schema, Name: prc.Name})
+	// }
+
+	exec, err := postgres.NewExecutor(db)
+	err = exec.RegisterProcedures(parameters.Procs)
+	if err != nil {
+		panic(err)
+	}
+
+	err = exec.RegisterTables(parameters.Tables)
+	if err != nil {
+		panic(err)
+	}
+
+	// sql, err := configInput.GenerateScript()
+	// if err != nil {
+	// 	fmt.Fprint(os.Stderr, err)
+	// 	os.Exit(1)
+	// }
+
+	fmt.Fprint(os.Stdout, "")
+}
+
+/*
 type parserPostgres struct{}
 
 // ParseColumns - Returns array of sql.ColumnType according to columns of table.
@@ -42,14 +112,14 @@ func (p parserPostgres) ParseConstraints(db *sql.DB, schemaName, tableName strin
 	type constraint struct{ name, def, related string }
 
 	rows, err := db.Query(`SELECT distinct
-		r.conname as name, 
-		pg_catalog.pg_get_constraintdef(r.oid, true) as def, 
+		r.conname as name,
+		pg_catalog.pg_get_constraintdef(r.oid, true) as def,
 		case when r.confrelid::regclass::varchar = '-' then
 			r.conrelid::regclass
-		else 
+		else
 			r.confrelid::regclass end as related,
 		r.contype as type
-	FROM pg_catalog.pg_constraint r 
+	FROM pg_catalog.pg_constraint r
 	WHERE r.conrelid = '` + schemaName + `.` + tableName + `'::regclass ORDER BY r.contype DESC`)
 
 	if err != nil {
@@ -108,7 +178,9 @@ func (p parserPostgres) RawColumnDefinition(col sql.ColumnType) (sqlType string,
 
 func (p parserPostgres) ParseProcedures(db *sql.DB, schemaName, procedureName string) (string, error) {
 
-	rows, err := db.Query(`SELECT /*n.nspname || '.' || proname AS fname,*/ pg_get_functiondef(p.oid) as definition
+	rows, err := db.Query(`SELECT
+		--n.nspname || '.' || proname AS fname,
+		pg_get_functiondef(p.oid) as definition
 	FROM pg_proc p
 	JOIN pg_type t
 	  ON p.prorettype = t.oid
@@ -136,94 +208,4 @@ func (p parserPostgres) ParseProcedures(db *sql.DB, schemaName, procedureName st
 	}
 
 	return definition, nil
-}
-
-type configFileProcs struct {
-	Schema, Name string
-}
-
-type configFileTables struct {
-	Schema, Name, Where string
-}
-
-type configFile struct {
-	Procs  []configFileProcs
-	Tables []configFileTables
-}
-
-func main() {
-	var connStrInput string
-	var tablesConfig string
-	flag.StringVar(&connStrInput, "inputdb", "", "connectionstring to input database ('{dialect}://{user}:{password}@{host}/{databasename}[?{parameters=value}]')")
-	flag.StringVar(&tablesConfig, "tables", "", "tables with respectives schemas ('schema.tableone[,schema.tabletwo]')")
-
-	flag.Parse()
-
-	if flag.NFlag() < 2 {
-		fmt.Fprintln(os.Stderr, "missing subcommands: inputdb and tables")
-
-		flag.PrintDefaults()
-
-		os.Exit(1)
-	}
-
-	// set the connection string to connect with input database
-	openConnInput := func(config *dbtestgen.ConfigDB) error {
-		//dbInstance, err := sql.Open("postgres", "postgres://postgres:senha@10.20.11.119/input?sslmode=disable")
-		//dbInstance, err := sql.Open("postgres", "postgres://pagoufacil:pagoufacilw3b@10.20.11.106/pagoufacildb?sslmode=disable")
-		dbInstance, err := sql.Open("postgres", connStrInput)
-		if err != nil {
-			return err
-		}
-		config.DB = dbInstance
-		return nil
-	}
-
-	// set tables to input configuration that generate the DDL
-	configInputTables := func(config *dbtestgen.ConfigDB) error {
-		fileConfig, err := os.Open(tablesConfig)
-		if err != nil {
-			return err
-		}
-		defer fileConfig.Close()
-
-		fileContent, err := ioutil.ReadAll(fileConfig)
-		if err != nil {
-			return err
-		}
-
-		parameters := configFile{}
-		err = yaml.Unmarshal(fileContent, &parameters)
-		if err != nil {
-			return err
-		}
-
-		fmt.Printf("config file converted:\n%+v\n\n", parameters)
-
-		for _, tbl := range parameters.Tables {
-			config.Tables = append(config.Tables, &dbtestgen.ConfigTable{Schema: tbl.Schema, Name: tbl.Name, Where: tbl.Where})
-		}
-
-		for _, prc := range parameters.Procs {
-			config.Procs = append(config.Procs, &dbtestgen.ConfigProc{Schema: prc.Schema, Name: prc.Name})
-		}
-
-		return nil
-	}
-
-	configInput, err := dbtestgen.AddConfigDB("entrada", dbtestgen.Input, openConnInput, configInputTables)
-	if err != nil {
-		fmt.Printf("Error: %v", err)
-		os.Exit(1)
-	}
-
-	dbtestgen.RegisterParser(parserPostgres{})
-
-	sql, err := configInput.GenerateScript()
-	if err != nil {
-		fmt.Fprint(os.Stderr, err)
-		os.Exit(1)
-	}
-
-	fmt.Fprint(os.Stdout, sql)
-}
+}*/
