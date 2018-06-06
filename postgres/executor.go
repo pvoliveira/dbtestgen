@@ -10,6 +10,7 @@ import (
 	"strings"
 	"text/template"
 
+	_ "github.com/lib/pq"
 	"github.com/pvoliveira/dbtestgen"
 )
 
@@ -24,22 +25,27 @@ type Executor struct {
 	tables     []*dbtestgen.Table
 }
 
+type FuncDDL func() (string, error)
+
 // SQLGenerator implements SQLGenerator interface
 type SQLGenerator struct {
-	fn func() (string, error)
+	fn *FuncDDL
 }
 
 // CommandSQL returns the DDL of each type
-func (s *SQLGenerator) CommandSQL() (string, error) {
+func (s SQLGenerator) CommandSQL() (string, error) {
 	if s.fn == nil {
 		return "", fmt.Errorf("function to build DDL not defined")
 	}
 
-	return s.fn()
+	fnddl := *s.fn
+	cmdsql, err := fnddl()
+
+	return cmdsql, err
 }
 
-func newSQLGenerator(fn func() (string, error)) (*SQLGenerator, error) {
-	return &SQLGenerator{fn}, nil
+func newSQLGenerator(fn FuncDDL) (SQLGenerator, error) {
+	return SQLGenerator{&fn}, nil
 }
 
 func (e *Executor) registerConstraints(tables []*dbtestgen.Table) error {
@@ -49,7 +55,7 @@ func (e *Executor) registerConstraints(tables []*dbtestgen.Table) error {
 
 	inputTables := make(map[string]bool)
 	for _, t := range tables {
-		inputTables[t.Name] = true
+		inputTables[t.Schema+"."+t.Name] = true
 	}
 
 	for i, tbl := range tables {
@@ -129,32 +135,36 @@ func (e *Executor) RegisterTables(tables []*dbtestgen.Table) error {
 		return errors.New("tables must be passed")
 	}
 
+	e.tables = make([]*dbtestgen.Table, len(tables))
+
 	for i, tbl := range tables {
 		if len(tbl.Schema) == 0 || len(tbl.Name) == 0 {
 			return fmt.Errorf("schema and name must be filled in table: item %v", i)
 		}
 
 		// configure function that returns the ddl of table
-		fnTblDDL := func() (string, error) {
-			rows, errFn := e.db.Query("SELECT * FROM " + tbl.Schema + "." + tbl.Name + " WHERE 1=2")
-			if errFn != nil {
-				return "", errFn
+		fnTblDDL := func(tableSchema, tableName string) func() (string, error) {
+			return func() (string, error) {
+				rows, errFn := e.db.Query("SELECT * FROM " + tableSchema + "." + tableName + " WHERE 1=2")
+				if errFn != nil {
+					return "", errFn
+				}
+				defer rows.Close()
+
+				cols, errFn := rows.ColumnTypes()
+				if errFn != nil {
+					return "", errFn
+				}
+
+				columnsDefinitions := make([]string, 0)
+
+				for _, col := range cols {
+					columnsDefinitions = append(columnsDefinitions, sqlColumnDefinition(*col))
+				}
+
+				return buildDDLCreateTable(tableSchema, tableName, columnsDefinitions)
 			}
-			defer rows.Close()
-
-			cols, errFn := rows.ColumnTypes()
-			if errFn != nil {
-				return "", errFn
-			}
-
-			columnsDefinitions := make([]string, 0)
-
-			for _, col := range cols {
-				columnsDefinitions = append(columnsDefinitions, sqlColumnDefinition(*col))
-			}
-
-			return buildDDLCreateTable(tbl.Schema, tbl.Name, columnsDefinitions)
-		}
+		}(tbl.Schema, tbl.Name)
 
 		gen, err := newSQLGenerator(fnTblDDL)
 		if err != nil {
@@ -163,7 +173,7 @@ func (e *Executor) RegisterTables(tables []*dbtestgen.Table) error {
 
 		tbl.SQLGenerator = gen
 
-		e.tables = append(e.tables, tbl)
+		e.tables[i] = tbl
 	}
 
 	err := e.registerConstraints(tables)
@@ -207,7 +217,8 @@ func sqlColumnDefinition(col sql.ColumnType) string {
 }
 
 func buildDDLCreateTable(schema, name string, columns []string) (string, error) {
-	createTableTemplate := `CREATE TABLE {{.Schema}}.{{.Name}}\n( {{.Columns}} );`
+	createTableTemplate := `CREATE TABLE {{.Schema}}.{{.Name}} ( 
+ {{.Columns}} );`
 
 	if len(schema) == 0 {
 		return "", errors.New("method needs a table's schema")
@@ -289,6 +300,8 @@ func (e *Executor) RegisterProcedures(procs []*dbtestgen.Procedure) error {
 		}
 
 		p.SQLGenerator = gen
+
+		e.procedures = append(e.procedures, p)
 	}
 
 	return nil
@@ -308,7 +321,7 @@ func (e *Executor) ReturnScript() (string, error) {
 		return "", errors.New("no tables registereds")
 	}
 
-	var buffer strings.Builder
+	var buffer bytes.Buffer
 
 	for _, t := range e.tables {
 		ddl, err := t.SQLGenerator.CommandSQL()
@@ -351,12 +364,16 @@ func (e *Executor) ReturnScript() (string, error) {
 
 // NewExecutor constructor of Executor
 func NewExecutor(connStr string) (*Executor, error) {
-	ex := &Executor{}
+	ex := Executor{}
+	ex.tables = make([]*dbtestgen.Table, 0)
+	ex.contraints = make(map[dbtestgen.TypeConstraint][]*dbtestgen.Constraint, 0)
+	ex.procedures = make([]*dbtestgen.Procedure, 0)
+	ex.statements = make([]*dbtestgen.Statement, 0)
 
 	var err error
 	if ex.db, err = sql.Open("postgres", connStr); err != nil {
 		return nil, err
 	}
 
-	return ex, nil
+	return &ex, nil
 }

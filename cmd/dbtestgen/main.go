@@ -12,8 +12,8 @@ import (
 )
 
 type configFile struct {
-	Procs  []*dbtestgen.Procedure
-	Tables []*dbtestgen.Table
+	Procs  []*dbtestgen.Procedure `json:"procs"`
+	Tables []*dbtestgen.Table     `json:"tables"`
 }
 
 func main() {
@@ -46,13 +46,11 @@ func main() {
 		panic(err)
 	}
 
-	parameters := configFile{}
+	var parameters configFile
 	err = yaml.Unmarshal(fileContent, &parameters)
 	if err != nil {
 		panic(err)
 	}
-
-	fmt.Printf("config file converted:\n%+v\n\n", parameters)
 
 	// for _, tbl := range parameters.Tables {
 	// 	config.Tables = append(config.Tables, &dbtestgen.ConfigTable{Schema: tbl.Schema, Name: tbl.Name, Where: tbl.Where})
@@ -63,6 +61,10 @@ func main() {
 	// }
 
 	exec, err := postgres.NewExecutor(db)
+	if err != nil {
+		panic(err)
+	}
+
 	err = exec.RegisterProcedures(parameters.Procs)
 	if err != nil {
 		panic(err)
@@ -73,13 +75,13 @@ func main() {
 		panic(err)
 	}
 
-	// sql, err := configInput.GenerateScript()
-	// if err != nil {
-	// 	fmt.Fprint(os.Stderr, err)
-	// 	os.Exit(1)
-	// }
+	sql, err := exec.ReturnScript()
+	if err != nil {
+		fmt.Fprint(os.Stderr, err)
+		os.Exit(1)
+	}
 
-	fmt.Fprint(os.Stdout, "")
+	fmt.Fprint(os.Stdout, sql)
 }
 
 /*
