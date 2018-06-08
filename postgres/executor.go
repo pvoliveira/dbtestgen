@@ -56,7 +56,11 @@ func (e *Executor) registerConstraints(tables []*dbtestgen.Table) error {
 
 	inputTables := make(map[string]bool)
 	for _, t := range tables {
-		inputTables[t.Schema+"."+t.Name] = true
+		if t.Schema == "public" || t.Schema == "PUBLIC" {
+			inputTables[t.Name] = true
+		} else {
+			inputTables[t.Schema+"."+t.Name] = true
+		}
 	}
 
 	for i, tbl := range tables {
