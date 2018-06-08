@@ -25,6 +25,7 @@ type Executor struct {
 	tables     []*dbtestgen.Table
 }
 
+// FuncDDL function used to return the code of data definition language (DDL)
 type FuncDDL func() (string, error)
 
 // SQLGenerator implements SQLGenerator interface

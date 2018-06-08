@@ -21,6 +21,8 @@ type SQLGenerator interface {
 	CommandSQL() (string, error)
 }
 
+// Table haves data about tables from database like schema and name,
+// which are used to retrive metadata to build DDL commands.
 type Table struct {
 	Schema string `json:"schema"`
 	Name   string `json:"name"`
@@ -28,6 +30,8 @@ type Table struct {
 	SQLGenerator
 }
 
+// Constraint haves data about tables from database like schema, name and table related
+// which are used to retrive metadata to build DDL commands.
 type Constraint struct {
 	Schema       string         `json:"schema"`
 	Name         string         `json:"name"`
@@ -36,6 +40,8 @@ type Constraint struct {
 	SQLGenerator
 }
 
+// Procedure haves data about tables from database like schema and name,
+// which are used to retrive metadata to build DDL commands.
 type Procedure struct {
 	Schema string `json:"schema"`
 	Name   string `json:"name"`
