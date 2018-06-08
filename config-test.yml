@@ -1,23 +1,11 @@
 procs:
-  - 
-    schema: banco
-    name: f_retorna_bancoslotericas
   -
-    schema: banco
-    name: pkgnpcob_fformatartelefone
+    schema: public
+    name: func1
 tables:
-  - 
-    schema: banco
-    name: carteira
-    where: "codigo = '1'"
-  - 
-    schema: banco
-    name: bandeira
-    where:
-  - 
-    schema: banco
-    name: cidade
-    where:
   -
-    schema: banco
-    name: bandeiraurlhomologacao
+    schema: public
+    name: table1
+  -
+    schema: public
+    name: table2
