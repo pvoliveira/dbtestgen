@@ -6,11 +6,11 @@ __Tested with PostgreSQL 9.4+__
 
 ## Motivation
 
-I start with this goal: a CLI that just copy some parts of a relational database to test specific areas of a legacy software. I want update with some features, like:
+I start with this goal: a CLI that basically just copy some parts of a relational database to test specific areas of a legacy software. I also want to update it with some features, like:
 
-- generate automatically the other database.
-- transfer to new database the data automatically.
-- to indicate how much of data in tables you wish.
+- Generate automatically the other database.
+- Transfer data automatically to the new database.
+- Indicate how much data (lines) you wish on each table.
 
 ## Installation
 
@@ -57,6 +57,6 @@ missing subcommands: inputdb and tables
         connectionstring to input database ('{dialect}://{user}:{password}@{host}/{databasename}[?{parameters=value}]')
 ```
 
-Running the cli, it will return a SQL script with DDL commands to create tables, contraints and procedures passed in configuration file.
+Running the cli, it will return a SQL script with DDL commands to create tables, constraints and procedures passed in the  configuration file.
 
-This it's the first version, as I said above, more feature are coming. If you have any problem to report or sugestion, please open a issue. Thanks!
+As mentioned before, it is just the first version and more features are coming. If you have any problem to report or suggestion, please open a issue. Thanks!
