@@ -31,10 +31,7 @@ func main() {
 
 		os.Exit(1)
 	}
-
-	//dbInstance, err := sql.Open("postgres", "postgres://postgres:senha@10.20.11.119/input?sslmode=disable")
-	//dbInstance, err := sql.Open("postgres", "postgres://pagoufacil:pagoufacilw3b@10.20.11.106/pagoufacildb?sslmode=disable")
-
+	
 	fileConfig, err := os.Open(config)
 	if err != nil {
 		panic(err)
